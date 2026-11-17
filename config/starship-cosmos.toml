@@ -1,0 +1,102 @@
+# Cosmos Pastel-Powerline 2-Line Prompt for Starship
+add_newline = true
+command_timeout = 500
+palette = "cosmos"
+
+format = """
+[](fg:teal)\
+$os\
+$hostname\
+$directory\
+$git_branch\
+$git_status\
+$cmd_duration\
+$time\
+$status\
+[](fg:prev_bg)\
+\n$username$character"""
+
+[palettes.cosmos]
+teal = "#2d9a94"
+coral = "#de7588"
+gold = "#d49a54"
+mauve = "#81668d"
+slate = "#4f6d8a"
+crimson = "#c94f6d"
+mint = "#4ee0b8"
+ink = "#13171c"
+light = "#f4f6fa"
+
+[os]
+disabled = false
+style = "bg:teal fg:ink"
+format = "[ $symbol]($style)"
+
+[os.symbols]
+Arch = " "
+Linux = " "
+Macos = " "
+Ubuntu = " "
+Debian = " "
+
+[hostname]
+ssh_only = false
+style = "bg:teal fg:ink bold"
+format = "[$hostname ]($style)"
+
+[directory]
+style = "bg:coral fg:ink bold"
+format = "[](fg:prev_bg bg:coral)[  → $path ]($style)"
+home_symbol = ""
+truncation_length = 2
+truncation_symbol = "…/"
+read_only = " "
+read_only_style = "bg:coral fg:ink"
+
+[git_branch]
+symbol = ""
+style = "bg:gold fg:ink bold"
+format = "[](fg:prev_bg bg:gold)[ $symbol $branch ]($style)"
+
+[git_status]
+style = "bg:gold fg:ink bold"
+format = "([$all_status ]($style))"
+ahead = "⇡${count}"
+diverged = "⇕⇡${ahead_count}⇣${behind_count}"
+behind = "⇣${count}"
+conflicted = ""
+up_to_date = ""
+untracked = "?"
+modified = ""
+staged = "+"
+stashed = "≡"
+renamed = "»"
+deleted = "✘"
+
+[cmd_duration]
+min_time = 0
+show_milliseconds = true
+style = "bg:mauve fg:light bold"
+format = "[](fg:prev_bg bg:mauve)[ 󱎫 $duration ]($style)"
+
+[time]
+disabled = false
+time_format = "%-I:%M %p"
+style = "bg:slate fg:light bold"
+format = "[](fg:prev_bg bg:slate)[  $time ]($style)"
+
+[status]
+disabled = false
+success_symbol = "[](fg:prev_bg bg:teal)[  ](bg:teal fg:light bold)"
+symbol = "[](fg:prev_bg bg:crimson)[  $status ](bg:crimson fg:light bold)"
+format = "$symbol"
+
+[username]
+show_always = true
+style_user = "bold fg:mint"
+style_root = "bold fg:gold"
+format = " [ $user]($style) "
+
+[character]
+success_symbol = "[❯❯](bold fg:mint)"
+error_symbol = "[❯❯](bold fg:crimson)"

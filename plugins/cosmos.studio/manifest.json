@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "cosmos.studio",
+  "name": "Cosmos Studio",
+  "version": "1.0.0",
+  "author": "Javier Pastor",
+  "description": "Cosmos Desktop Pins & docked Studio side-panel with live Antigravity/Claude/Codex crew and Vinyl/Aurora YouTube Music player",
+  "kinds": [
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}

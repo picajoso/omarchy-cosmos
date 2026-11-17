@@ -1,0 +1,1124 @@
+#!/usr/bin/env python3
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+STYLES = ["islands", "frame", "glass", "clear"]
+STYLE_LABELS = {
+    "islands": ("Islands", "1/4"),
+    "frame": ("Full width", "2/4"),
+    "glass": ("Glass", "3/4"),
+    "clear": ("Transparent", "4/4"),
+}
+
+LOGO_STYLES = ["warm", "glacier", "emerald", "aurora", "theme"]
+LOGO_SCALES = ["small", "medium", "large"]
+
+HOME_DIR = Path.home()
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", str(HOME_DIR / ".local/state"))) / "cosmos"
+OMARCHY_STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", str(HOME_DIR / ".local/state"))) / "omarchy"
+OMARCHY_PATH = Path(os.environ.get("OMARCHY_PATH", "/usr/share/omarchy"))
+CONFIG_PATH = STATE_DIR / "config.json"
+CUSTOM_APPEARANCES_PATH = STATE_DIR / "custom-appearances.json"
+UNDO_SNAPSHOT_PATH = STATE_DIR / "undo-snapshot.json"
+
+DEFAULT_CONFIG = {
+    "version": 1,
+    "barStyle": "frame",
+    "toastSeq": 0,
+    "alwaysShowVinyl": True,
+    "musicUrl": "https://music.youtube.com",
+    "studioOpen": True,
+    "pinLayout": "left",
+    "playerMode": "vinyl",
+    "menuStyle": "left",
+    "rainMode": "drizzle",
+    "showWallpaperLogo": False,
+    "logoStyle": "warm",
+    "logoScale": "medium",
+    "arrivalOnUnlock": True,
+    "activeAppearance": "last-horizon",
+    "undoPending": False,
+}
+
+BUILTIN_APPEARANCES = [
+    {
+        "id": "last-horizon",
+        "name": "Last Horizon",
+        "subtitle": "Flagship · glass islands · gradient logo",
+        "theme": "last-horizon",
+        "wallpaper": "1-eyes-wide.webp",
+        "barStyle": "islands",
+        "menuStyle": "left",
+        "pinLayout": "left",
+        "rainMode": "drizzle",
+        "showWallpaperLogo": True,
+        "logoStyle": "warm",
+        "logoScale": "medium",
+        "builtin": True,
+    },
+    {
+        "id": "leviathan",
+        "name": "Leviathan Waves",
+        "subtitle": "Full bar · ocean arrival · gradient logo",
+        "theme": "catppuccin",
+        "wallpaper": "2-waves.webp",
+        "barStyle": "frame",
+        "menuStyle": "left",
+        "pinLayout": "left",
+        "rainMode": "downpour",
+        "showWallpaperLogo": True,
+        "logoStyle": "warm",
+        "logoScale": "medium",
+        "builtin": True,
+    },
+    {
+        "id": "wildwood",
+        "name": "Wildwood Canopy",
+        "subtitle": "Transparent · menu right · forest mist",
+        "theme": "everforest",
+        "wallpaper": "1-tree-tops.webp",
+        "barStyle": "clear",
+        "menuStyle": "right",
+        "pinLayout": "left",
+        "rainMode": "drizzle",
+        "showWallpaperLogo": False,
+        "logoStyle": "emerald",
+        "logoScale": "medium",
+        "builtin": True,
+    },
+    {
+        "id": "northstar",
+        "name": "Northstar Polar",
+        "subtitle": "Full glass · glacier logo · centred pins",
+        "theme": "nord",
+        "wallpaper": "0-black-moon.jpg",
+        "barStyle": "glass",
+        "menuStyle": "top",
+        "pinLayout": "center",
+        "rainMode": "drizzle",
+        "showWallpaperLogo": True,
+        "logoStyle": "glacier",
+        "logoScale": "medium",
+        "builtin": True,
+    },
+    {
+        "id": "cosmic",
+        "name": "Cosmic Ethereal",
+        "subtitle": "Islands · cosmic arrival · menu centre",
+        "theme": "ethereal",
+        "wallpaper": "1-cosmic.webp",
+        "barStyle": "islands",
+        "menuStyle": "center",
+        "pinLayout": "right",
+        "rainMode": "drizzle",
+        "showWallpaperLogo": True,
+        "logoStyle": "aurora",
+        "logoScale": "medium",
+        "builtin": True,
+    },
+    {
+        "id": "synthgrid",
+        "name": "Synthgrid Night",
+        "subtitle": "Full bar · centred pins · no logo",
+        "theme": "hackerman",
+        "wallpaper": "1-synth-scape.jpg",
+        "barStyle": "frame",
+        "menuStyle": "bottom",
+        "pinLayout": "center",
+        "rainMode": "downpour",
+        "showWallpaperLogo": False,
+        "logoStyle": "glacier",
+        "logoScale": "medium",
+        "builtin": True,
+    },
+]
+
+
+def load_config() -> dict:
+    try:
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            merged = dict(DEFAULT_CONFIG)
+            merged.update(data)
+            if merged.get("barStyle") not in STYLES:
+                merged["barStyle"] = "frame"
+            if merged.get("logoStyle") not in LOGO_STYLES:
+                merged["logoStyle"] = "warm"
+            if merged.get("logoScale") not in LOGO_SCALES:
+                merged["logoScale"] = "medium"
+            return merged
+    except Exception:
+        pass
+    return dict(DEFAULT_CONFIG)
+
+
+def save_config(cfg: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".config.", dir=str(STATE_DIR))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=2)
+            fh.write("\n")
+        os.replace(tmp, CONFIG_PATH)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def shell_notify(target: str, method: str = "syncConfig") -> None:
+    subprocess.run(
+        ["omarchy-shell", "-q", target, method],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def notify_all() -> None:
+    for tgt, meth in [
+        ("cosmos.bar", "syncConfig"),
+        ("cosmos.studio", "syncConfig"),
+        ("cosmos.menu", "syncConfig"),
+        ("lock", "syncCosmosConfig"),
+        ("background", "syncCosmosConfig"),
+        ("cosmos.settings", "syncConfig"),
+    ]:
+        shell_notify(tgt, meth)
+
+
+def resolve_preview_path(theme_name: str, wallpaper_entry: str) -> str:
+    if wallpaper_entry and os.path.isabs(wallpaper_entry) and os.path.exists(wallpaper_entry):
+        return wallpaper_entry
+    candidates = [
+        HOME_DIR / ".config/omarchy/themes" / theme_name / "backgrounds" / wallpaper_entry,
+        OMARCHY_PATH / "themes" / theme_name / "backgrounds" / wallpaper_entry,
+        OMARCHY_STATE_DIR / "current/theme/backgrounds" / wallpaper_entry,
+    ]
+    for cand in candidates:
+        if cand.exists():
+            return str(cand)
+    # Fallback to first image in theme backgrounds
+    for folder in [
+        HOME_DIR / ".config/omarchy/themes" / theme_name / "backgrounds",
+        OMARCHY_PATH / "themes" / theme_name / "backgrounds",
+    ]:
+        if folder.is_dir():
+            for child in sorted(folder.iterdir()):
+                if child.is_file() and child.suffix.lower() in (".webp", ".jpg", ".jpeg", ".png"):
+                    return str(child)
+    return ""
+
+
+def load_custom_appearances() -> list[dict]:
+    try:
+        raw = json.loads(CUSTOM_APPEARANCES_PATH.read_text(encoding="utf-8"))
+        if isinstance(raw, list):
+            return [x for x in raw if isinstance(x, dict) and x.get("id")]
+    except Exception:
+        pass
+    return []
+
+
+def save_custom_appearances(items: list[dict]) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    CUSTOM_APPEARANCES_PATH.write_text(json.dumps(items, indent=2) + "\n", encoding="utf-8")
+
+
+def get_all_appearances() -> list[dict]:
+    enriched = []
+    for item in BUILTIN_APPEARANCES + load_custom_appearances():
+        entry = dict(item)
+        entry["previewPath"] = resolve_preview_path(str(entry.get("theme") or ""), str(entry.get("wallpaper") or ""))
+        enriched.append(entry)
+    return enriched
+
+
+def current_omarchy_theme() -> str:
+    try:
+        return (OMARCHY_STATE_DIR / "current/theme.name").read_text(encoding="utf-8").strip()
+    except Exception:
+        return "last-horizon"
+
+
+def current_omarchy_wallpaper() -> str:
+    try:
+        return str((OMARCHY_STATE_DIR / "current/background").resolve())
+    except Exception:
+        return ""
+
+
+def apply_theme_and_wallpaper(theme_name: str, wallpaper_entry: str) -> None:
+    if not theme_name:
+        return
+    cur_theme = current_omarchy_theme()
+    target_filename = os.path.basename(wallpaper_entry) if wallpaper_entry else ""
+
+    if cur_theme != theme_name:
+        if target_filename:
+            tb_dir = OMARCHY_STATE_DIR / "theme-backgrounds"
+            tb_dir.mkdir(parents=True, exist_ok=True)
+            staged_hint = OMARCHY_STATE_DIR / "current/theme/backgrounds" / target_filename
+            (tb_dir / theme_name).write_text(str(staged_hint) + "\n", encoding="utf-8")
+        subprocess.Popen(
+            ["omarchy-theme-set", theme_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    else:
+        resolved = ""
+        if wallpaper_entry and os.path.isabs(wallpaper_entry) and os.path.exists(wallpaper_entry):
+            resolved = wallpaper_entry
+        elif target_filename:
+            cand = OMARCHY_STATE_DIR / "current/theme/backgrounds" / target_filename
+            if cand.exists():
+                resolved = str(cand)
+        cur_bg = current_omarchy_wallpaper()
+        if resolved and resolved != cur_bg:
+            subprocess.Popen(
+                ["omarchy-theme-bg-set", resolved],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+
+
+def cmd_init() -> int:
+    if not CONFIG_PATH.exists():
+        save_config(DEFAULT_CONFIG)
+    else:
+        cfg = load_config()
+        save_config(cfg)
+    return 0
+
+
+def cmd_bar_style(args: list[str]) -> int:
+    cfg = load_config()
+    if not args:
+        print(cfg["barStyle"])
+        return 0
+
+    target = args[0].strip().lower()
+    aliases = {
+        "full": "frame",
+        "full-width": "frame",
+        "fullwidth": "frame",
+        "transparent": "clear",
+    }
+    target = aliases.get(target, target)
+
+    if target == "cycle":
+        idx = STYLES.index(cfg["barStyle"]) if cfg["barStyle"] in STYLES else 0
+        next_style = STYLES[(idx + 1) % len(STYLES)]
+    elif target == "prev":
+        idx = STYLES.index(cfg["barStyle"]) if cfg["barStyle"] in STYLES else 0
+        next_style = STYLES[(idx - 1) % len(STYLES)]
+    elif target in STYLES:
+        next_style = target
+    else:
+        print(f"cosmos-ctl: unknown bar style '{target}' (expected cycle, {', '.join(STYLES)})", file=sys.stderr)
+        return 1
+
+    cfg["barStyle"] = next_style
+    cfg["toastSeq"] = int(cfg.get("toastSeq", 0)) + 1
+    save_config(cfg)
+    shell_notify("cosmos.bar", "syncConfig")
+    shell_notify("cosmos.settings", "syncConfig")
+    label, frac = STYLE_LABELS[next_style]
+    print(f"{label} ({frac})")
+    return 0
+
+
+def hypr_dispatch(lua_expr: str, *fallback: str) -> None:
+    res = subprocess.run(["hyprctl", "dispatch", lua_expr], capture_output=True, text=True)
+    if res.returncode != 0 and fallback:
+        subprocess.run(["hyprctl", "dispatch", *fallback], capture_output=True, text=True)
+
+
+def cmd_music_open() -> int:
+    cfg = load_config()
+    url = str(cfg.get("musicUrl") or "https://music.youtube.com")
+    try:
+        res = subprocess.run(["hyprctl", "clients", "-j"], capture_output=True, text=True, timeout=2)
+        mon_res = subprocess.run(["hyprctl", "monitors", "-j"], capture_output=True, text=True, timeout=2)
+        if res.returncode == 0:
+            clients = json.loads(res.stdout)
+            monitors = json.loads(mon_res.stdout) if mon_res.returncode == 0 else []
+            focused_mon = next((m for m in monitors if m.get("focused")), monitors[0] if monitors else {})
+            active_ws_id = (focused_mon.get("activeWorkspace") or {}).get("id")
+            active_special = (focused_mon.get("specialWorkspace") or {}).get("name") or ""
+
+            for c in clients:
+                cls = str(c.get("class") or "").lower()
+                title = str(c.get("title") or "").lower()
+                initial_title = str(c.get("initialTitle") or "").lower()
+                if (
+                    "music.youtube.com" in cls
+                    or "youtube music" in title
+                    or "youtube music" in initial_title
+                    or "music.youtube.com" in initial_title
+                ):
+                    addr = c.get("address")
+                    ws = c.get("workspace") or {}
+                    ws_name = str(ws.get("name") or "")
+                    ws_id = ws.get("id")
+                    is_floating = bool(c.get("floating"))
+                    if not addr:
+                        break
+
+                    if not is_floating:
+                        hypr_dispatch(
+                            f'hl.dsp.window.float({{ window = "address:{addr}", action = "set" }})',
+                            "setfloating",
+                            f"address:{addr}",
+                        )
+                        hypr_dispatch(
+                            f'hl.dsp.window.resize({{ window = "address:{addr}", x = 1280, y = 820 }})',
+                            "resizewindowpixel",
+                            "exact 1280 820",
+                            f"address:{addr}",
+                        )
+                        hypr_dispatch(
+                            f'hl.dsp.window.center({{ window = "address:{addr}" }})',
+                            "centerwindow",
+                        )
+
+                    if ws_name == "special:music":
+                        hypr_dispatch('hl.dsp.workspace.toggle_special("music")', "togglespecialworkspace", "music")
+                        return 0
+
+                    if ws_name.startswith("special:"):
+                        hypr_dispatch(
+                            f'hl.dsp.window.move({{ workspace = "special:music", follow = false, window = "address:{addr}" }})',
+                            "movetoworkspacesilent",
+                            f"special:music,address:{addr}",
+                        )
+                        if active_special == ws_name:
+                            sp_old = ws_name.split(":", 1)[1]
+                            hypr_dispatch(f'hl.dsp.workspace.toggle_special("{sp_old}")', "togglespecialworkspace", sp_old)
+                        else:
+                            hypr_dispatch('hl.dsp.workspace.toggle_special("music")', "togglespecialworkspace", "music")
+                        return 0
+
+                    if ws_id == active_ws_id and not active_special:
+                        hypr_dispatch(
+                            f'hl.dsp.window.move({{ workspace = "special:music", follow = false, window = "address:{addr}" }})',
+                            "movetoworkspacesilent",
+                            f"special:music,address:{addr}",
+                        )
+                        if active_ws_id is not None:
+                            hypr_dispatch(f'hl.dsp.focus({{ workspace = "{active_ws_id}" }})', "workspace", str(active_ws_id))
+                        return 0
+
+                    hypr_dispatch(
+                        f'hl.dsp.window.move({{ workspace = "special:music", follow = false, window = "address:{addr}" }})',
+                        "movetoworkspacesilent",
+                        f"special:music,address:{addr}",
+                    )
+                    if active_special != "special:music":
+                        hypr_dispatch('hl.dsp.workspace.toggle_special("music")', "togglespecialworkspace", "music")
+                    return 0
+    except Exception:
+        pass
+
+    subprocess.Popen(
+        ["omarchy-launch-webapp", url],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return 0
+
+
+MINIMIZED_STACK_PATH = STATE_DIR / "minimized.json"
+
+
+def load_minimized_stack() -> list[str]:
+    try:
+        data = json.loads(MINIMIZED_STACK_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return [str(x) for x in data if x]
+    except Exception:
+        pass
+    return []
+
+
+def save_minimized_stack(stack: list[str]) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    MINIMIZED_STACK_PATH.write_text(json.dumps(stack, indent=2) + "\n", encoding="utf-8")
+
+
+def cmd_window_hide() -> int:
+    try:
+        win_res = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True, text=True, timeout=2)
+        mon_res = subprocess.run(["hyprctl", "monitors", "-j"], capture_output=True, text=True, timeout=2)
+        if win_res.returncode != 0:
+            return 1
+        win = json.loads(win_res.stdout)
+        addr = str(win.get("address") or "")
+        if not addr:
+            return 0
+        ws_name = str((win.get("workspace") or {}).get("name") or "")
+        monitors = json.loads(mon_res.stdout) if mon_res.returncode == 0 else []
+        focused_mon = next((m for m in monitors if m.get("focused")), monitors[0] if monitors else {})
+        active_ws_id = (focused_mon.get("activeWorkspace") or {}).get("id") or 1
+
+        if ws_name == "special:music":
+            hypr_dispatch('hl.dsp.workspace.toggle_special("music")', "togglespecialworkspace", "music")
+            return 0
+
+        stack = [a for a in load_minimized_stack() if a != addr]
+        stack.append(addr)
+        save_minimized_stack(stack)
+
+        hypr_dispatch(
+            f'hl.dsp.window.move({{ workspace = "special:minimized", follow = false, window = "address:{addr}" }})',
+            "movetoworkspacesilent",
+            f"special:minimized,address:{addr}",
+        )
+        hypr_dispatch(f'hl.dsp.focus({{ workspace = "{active_ws_id}" }})', "workspace", str(active_ws_id))
+        return 0
+    except Exception:
+        return 1
+
+
+def cmd_window_restore() -> int:
+    try:
+        res = subprocess.run(["hyprctl", "clients", "-j"], capture_output=True, text=True, timeout=2)
+        mon_res = subprocess.run(["hyprctl", "monitors", "-j"], capture_output=True, text=True, timeout=2)
+        if res.returncode != 0:
+            return 1
+        clients = json.loads(res.stdout)
+        monitors = json.loads(mon_res.stdout) if mon_res.returncode == 0 else []
+        focused_mon = next((m for m in monitors if m.get("focused")), monitors[0] if monitors else {})
+        active_ws_id = (focused_mon.get("activeWorkspace") or {}).get("id") or 1
+        active_special = str((focused_mon.get("specialWorkspace") or {}).get("name") or "")
+
+        if active_special == "special:scratchpad":
+            hypr_dispatch('hl.dsp.workspace.toggle_special("scratchpad")', "togglespecialworkspace", "scratchpad")
+
+        by_addr = {str(c.get("address") or ""): c for c in clients if c.get("address")}
+        stack = [a for a in load_minimized_stack() if a in by_addr]
+
+        target_addr = ""
+        while stack:
+            cand = stack.pop()
+            ws_name = str((by_addr[cand].get("workspace") or {}).get("name") or "")
+            if ws_name in ("special:minimized", "special:scratchpad"):
+                target_addr = cand
+                break
+
+        if not target_addr:
+            for c in reversed(clients):
+                ws_name = str((c.get("workspace") or {}).get("name") or "")
+                if ws_name in ("special:minimized", "special:scratchpad"):
+                    target_addr = str(c.get("address") or "")
+                    break
+
+        save_minimized_stack(stack)
+        if not target_addr:
+            return 0
+
+        hypr_dispatch(
+            f'hl.dsp.window.move({{ workspace = "{active_ws_id}", follow = false, window = "address:{target_addr}" }})',
+            "movetoworkspacesilent",
+            f"{active_ws_id},address:{target_addr}",
+        )
+        hypr_dispatch(f'hl.dsp.focus({{ window = "address:{target_addr}" }})', "focuswindow", f"address:{target_addr}")
+        return 0
+    except Exception:
+        return 1
+
+
+DESKTOP_STASH_PATH = STATE_DIR / "desktop_stash.json"
+
+
+def load_desktop_stash() -> dict:
+    try:
+        data = json.loads(DESKTOP_STASH_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+def save_desktop_stash(data: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    DESKTOP_STASH_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def cmd_desktop_toggle() -> int:
+    try:
+        res = subprocess.run(["hyprctl", "clients", "-j"], capture_output=True, text=True, timeout=2)
+        mon_res = subprocess.run(["hyprctl", "monitors", "-j"], capture_output=True, text=True, timeout=2)
+        win_res = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True, text=True, timeout=2)
+        if res.returncode != 0 or mon_res.returncode != 0:
+            return 1
+
+        clients = json.loads(res.stdout)
+        monitors = json.loads(mon_res.stdout)
+        focused_mon = next((m for m in monitors if m.get("focused")), monitors[0] if monitors else {})
+        active_ws_id = (focused_mon.get("activeWorkspace") or {}).get("id") or 1
+        active_special = str((focused_mon.get("specialWorkspace") or {}).get("name") or "")
+        active_win = json.loads(win_res.stdout) if win_res.returncode == 0 else {}
+        focused_addr = str(active_win.get("address") or "")
+
+        if active_special == "special:scratchpad":
+            hypr_dispatch('hl.dsp.workspace.toggle_special("scratchpad")', "togglespecialworkspace", "scratchpad")
+
+        stash_ws_name = f"special:desktop_{active_ws_id}"
+        ws_key = str(active_ws_id)
+        stash_meta = load_desktop_stash()
+
+        stashed_clients = [
+            c for c in clients if str((c.get("workspace") or {}).get("name") or "") == stash_ws_name
+        ]
+
+        if stashed_clients:
+            saved_entry = stash_meta.get(ws_key) or {}
+            saved_order = saved_entry.get("order") or []
+            saved_focus = str(saved_entry.get("focused") or "")
+
+            by_addr = {str(c.get("address") or ""): c for c in stashed_clients if c.get("address")}
+            ordered_addrs = [a for a in saved_order if a in by_addr]
+            for a in by_addr:
+                if a not in ordered_addrs:
+                    ordered_addrs.append(a)
+
+            for addr in ordered_addrs:
+                hypr_dispatch(
+                    f'hl.dsp.window.move({{ workspace = "{active_ws_id}", follow = false, window = "address:{addr}" }})',
+                    "movetoworkspacesilent",
+                    f"{active_ws_id},address:{addr}",
+                )
+
+            focus_target = saved_focus if saved_focus in by_addr else (ordered_addrs[-1] if ordered_addrs else "")
+            if focus_target:
+                hypr_dispatch(f'hl.dsp.focus({{ window = "address:{focus_target}" }})', "focuswindow", f"address:{focus_target}")
+
+            stash_meta.pop(ws_key, None)
+            save_desktop_stash(stash_meta)
+            return 0
+
+        ws_clients = [
+            c for c in clients if (c.get("workspace") or {}).get("id") == active_ws_id
+        ]
+        if not ws_clients:
+            return 0
+
+        ws_clients.sort(key=lambda c: ((c.get("at") or [0, 0])[0], (c.get("at") or [0, 0])[1]))
+        addrs = [str(c.get("address") or "") for c in ws_clients if c.get("address")]
+
+        stash_meta[ws_key] = {
+            "order": addrs,
+            "focused": focused_addr if focused_addr in addrs else (addrs[-1] if addrs else ""),
+        }
+        save_desktop_stash(stash_meta)
+
+        for addr in addrs:
+            hypr_dispatch(
+                f'hl.dsp.window.move({{ workspace = "{stash_ws_name}", follow = false, window = "address:{addr}" }})',
+                "movetoworkspacesilent",
+                f"{stash_ws_name},address:{addr}",
+            )
+
+        hypr_dispatch(f'hl.dsp.focus({{ workspace = "{active_ws_id}" }})', "workspace", str(active_ws_id))
+        return 0
+    except Exception:
+        return 1
+
+
+def notify_studio() -> None:
+    shell_notify("cosmos.studio", "syncConfig")
+    shell_notify("cosmos.settings", "syncConfig")
+
+
+def cmd_studio(args: list[str]) -> int:
+    cfg = load_config()
+    cur = bool(cfg.get("studioOpen", True))
+    mode = (args[0].strip().lower() if args else "toggle")
+    if mode in ("toggle", ""):
+        nxt = not cur
+    elif mode in ("open", "on", "show", "true", "1"):
+        nxt = True
+    elif mode in ("close", "off", "hide", "false", "0"):
+        nxt = False
+    else:
+        print(f"cosmos-ctl: unknown studio mode '{mode}'", file=sys.stderr)
+        return 1
+    cfg["studioOpen"] = nxt
+    save_config(cfg)
+    notify_studio()
+    print("open" if nxt else "closed")
+    return 0
+
+
+def cmd_pin_layout(args: list[str]) -> int:
+    layouts = ["left", "center", "right"]
+    cfg = load_config()
+    cur = str(cfg.get("pinLayout") or "left")
+    if cur not in layouts:
+        cur = "left"
+    if not args:
+        print(cur)
+        return 0
+    mode = args[0].strip().lower()
+    if mode == "centre":
+        mode = "center"
+    if mode == "cycle":
+        nxt = layouts[(layouts.index(cur) + 1) % len(layouts)]
+    elif mode in layouts:
+        nxt = mode
+    else:
+        print(f"cosmos-ctl: unknown pin layout '{mode}'", file=sys.stderr)
+        return 1
+    cfg["pinLayout"] = nxt
+    save_config(cfg)
+    notify_studio()
+    print(nxt)
+    return 0
+
+
+def cmd_player_mode(args: list[str]) -> int:
+    modes = ["vinyl", "aurora", "minimal"]
+    cfg = load_config()
+    cur = str(cfg.get("playerMode") or "vinyl")
+    if cur not in modes:
+        cur = "vinyl"
+    if not args:
+        print(cur)
+        return 0
+    mode = args[0].strip().lower()
+    if mode == "cycle":
+        nxt = modes[(modes.index(cur) + 1) % len(modes)]
+    elif mode in modes:
+        nxt = mode
+    else:
+        print(f"cosmos-ctl: unknown player mode '{mode}'", file=sys.stderr)
+        return 1
+    cfg["playerMode"] = nxt
+    save_config(cfg)
+    notify_studio()
+    print(nxt)
+    return 0
+
+
+def cmd_focus_agent(args: list[str]) -> int:
+    target_addr = args[0].strip() if args else ""
+    if not target_addr:
+        try:
+            agents_data = json.loads((STATE_DIR / "agents-live.json").read_text(encoding="utf-8"))
+            most = agents_data.get("mostUrgent") or {}
+            target_addr = str(most.get("windowAddress") or "")
+        except Exception:
+            pass
+    if not target_addr:
+        return 0
+
+    try:
+        res = subprocess.run(["hyprctl", "clients", "-j"], capture_output=True, text=True, timeout=2)
+        mon_res = subprocess.run(["hyprctl", "monitors", "-j"], capture_output=True, text=True, timeout=2)
+        if res.returncode != 0:
+            return 1
+        clients = json.loads(res.stdout)
+        monitors = json.loads(mon_res.stdout) if mon_res.returncode == 0 else []
+        focused_mon = next((m for m in monitors if m.get("focused")), monitors[0] if monitors else {})
+        active_ws_id = (focused_mon.get("activeWorkspace") or {}).get("id") or 1
+
+        win = next((c for c in clients if str(c.get("address") or "") == target_addr), None)
+        if not win:
+            return 0
+
+        ws_name = str((win.get("workspace") or {}).get("name") or "")
+        if ws_name.startswith("special:desktop_"):
+            cmd_desktop_toggle()
+        elif ws_name in ("special:minimized", "special:scratchpad"):
+            hypr_dispatch(
+                f'hl.dsp.window.move({{ workspace = "{active_ws_id}", follow = false, window = "address:{target_addr}" }})',
+                "movetoworkspacesilent",
+                f"{active_ws_id},address:{target_addr}",
+            )
+
+        hypr_dispatch(
+            f'hl.dsp.focus({{ window = "address:{target_addr}" }})',
+            "focuswindow",
+            f"address:{target_addr}",
+        )
+        return 0
+    except Exception:
+        return 1
+
+
+def cmd_menu_style(args: list[str]) -> int:
+    styles = ["left", "right", "top", "bottom", "center"]
+    cfg = load_config()
+    cur = str(cfg.get("menuStyle") or "left")
+    if cur not in styles:
+        cur = "left"
+    if not args:
+        print(cur)
+        return 0
+    mode = args[0].strip().lower()
+    aliases = {
+        "left-drawer": "left",
+        "right-drawer": "right",
+        "top-slide": "top",
+        "bottom-slide": "bottom",
+        "centre": "center",
+    }
+    mode = aliases.get(mode, mode)
+    if mode == "cycle":
+        nxt = styles[(styles.index(cur) + 1) % len(styles)]
+    elif mode in styles:
+        nxt = mode
+    else:
+        print(f"cosmos-ctl: unknown menu style '{mode}' (expected cycle, {', '.join(styles)})", file=sys.stderr)
+        return 1
+    cfg["menuStyle"] = nxt
+    save_config(cfg)
+    shell_notify("cosmos.menu", "syncConfig")
+    shell_notify("cosmos.settings", "syncConfig")
+    print(nxt)
+    return 0
+
+
+def cmd_rain_mode(args: list[str]) -> int:
+    modes = ["drizzle", "downpour", "clear"]
+    cfg = load_config()
+    cur = str(cfg.get("rainMode") or "drizzle")
+    if cur not in modes:
+        cur = "drizzle"
+    if not args:
+        print(cur)
+        return 0
+    mode = args[0].strip().lower()
+    if mode in ("off", "none"):
+        mode = "clear"
+    if mode == "cycle":
+        nxt = modes[(modes.index(cur) + 1) % len(modes)]
+    elif mode in modes:
+        nxt = mode
+    else:
+        print(f"cosmos-ctl: unknown rain mode '{mode}' (expected cycle, {', '.join(modes)})", file=sys.stderr)
+        return 1
+    cfg["rainMode"] = nxt
+    save_config(cfg)
+    shell_notify("lock", "syncCosmosConfig")
+    shell_notify("cosmos.settings", "syncConfig")
+    print(nxt)
+    return 0
+
+
+def cmd_lock_preview(args: list[str]) -> int:
+    action = (args[0].strip().lower() if args else "preview")
+    if action in ("hide", "close", "off"):
+        subprocess.run(["omarchy-shell", "lock", "hidePreview"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        subprocess.run(["omarchy-shell", "lock", "preview"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return 0
+
+
+def cmd_logo(args: list[str]) -> int:
+    cfg = load_config()
+    if not args:
+        print("on" if cfg.get("showWallpaperLogo", True) else "off")
+        return 0
+    sub = args[0].strip().lower()
+    if sub == "toggle":
+        cfg["showWallpaperLogo"] = not bool(cfg.get("showWallpaperLogo", True))
+    elif sub in ("on", "true", "1", "show", "enable"):
+        cfg["showWallpaperLogo"] = True
+    elif sub in ("off", "false", "0", "hide", "disable"):
+        cfg["showWallpaperLogo"] = False
+    elif sub == "style":
+        if len(args) < 2:
+            print(cfg.get("logoStyle", "warm"))
+            return 0
+        st = args[1].strip().lower()
+        if st == "cycle":
+            cur = cfg.get("logoStyle", "warm")
+            idx = LOGO_STYLES.index(cur) if cur in LOGO_STYLES else 0
+            st = LOGO_STYLES[(idx + 1) % len(LOGO_STYLES)]
+        elif st not in LOGO_STYLES:
+            print(f"cosmos-ctl: unknown logo style '{st}'", file=sys.stderr)
+            return 1
+        cfg["logoStyle"] = st
+        cfg["showWallpaperLogo"] = True
+    elif sub == "scale":
+        if len(args) < 2:
+            print(cfg.get("logoScale", "medium"))
+            return 0
+        sc = args[1].strip().lower()
+        if sc not in LOGO_SCALES:
+            print(f"cosmos-ctl: unknown logo scale '{sc}'", file=sys.stderr)
+            return 1
+        cfg["logoScale"] = sc
+    else:
+        print(f"cosmos-ctl: unknown logo option '{sub}'", file=sys.stderr)
+        return 1
+
+    save_config(cfg)
+    shell_notify("background", "syncCosmosConfig")
+    shell_notify("cosmos.settings", "syncConfig")
+    print(json.dumps({"showWallpaperLogo": cfg["showWallpaperLogo"], "logoStyle": cfg["logoStyle"], "logoScale": cfg["logoScale"]}))
+    return 0
+
+
+def cmd_arrival(args: list[str]) -> int:
+    cfg = load_config()
+    sub = args[0].strip().lower() if args else "play"
+    toggle_file = OMARCHY_STATE_DIR / "toggles/background-intros-off"
+
+    if sub == "play":
+        res = subprocess.run(
+            ["omarchy-theme-bg-boot-intro", "--resolve-only"],
+            capture_output=True,
+            text=True,
+        )
+        intro_path = res.stdout.strip()
+        if intro_path and os.path.isfile(intro_path):
+            subprocess.Popen(
+                ["owe", "intro", "--start", "first-frame", intro_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            print(intro_path)
+        else:
+            print("no-intro")
+        return 0
+    if sub in ("enable", "disable", "toggle"):
+        subprocess.run(["omarchy-theme-bg-intro", sub], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        shell_notify("cosmos.settings", "syncConfig")
+        return 0
+    if sub in ("unlock-toggle", "unlock-on", "unlock-off"):
+        if sub == "unlock-toggle":
+            cfg["arrivalOnUnlock"] = not bool(cfg.get("arrivalOnUnlock", True))
+        else:
+            cfg["arrivalOnUnlock"] = (sub == "unlock-on")
+        save_config(cfg)
+        shell_notify("lock", "syncCosmosConfig")
+        shell_notify("cosmos.settings", "syncConfig")
+        print("on" if cfg["arrivalOnUnlock"] else "off")
+        return 0
+    if sub == "status":
+        print(json.dumps({
+            "introsEnabled": not toggle_file.exists(),
+            "arrivalOnUnlock": bool(cfg.get("arrivalOnUnlock", True)),
+        }))
+        return 0
+    return 1
+
+
+def cmd_settings(args: list[str]) -> int:
+    action = args[0].strip().lower() if args else "toggle"
+    if action not in ("toggle", "open", "close"):
+        action = "toggle"
+    subprocess.run(["omarchy-shell", "cosmos.settings", action], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return 0
+
+
+def cmd_appearance(args: list[str]) -> int:
+    cfg = load_config()
+    sub = args[0].strip().lower() if args else "list"
+
+    if sub == "list":
+        print(json.dumps({
+            "activeAppearance": cfg.get("activeAppearance", ""),
+            "undoPending": bool(cfg.get("undoPending", False)),
+            "introsEnabled": not (OMARCHY_STATE_DIR / "toggles/background-intros-off").exists(),
+            "currentTheme": current_omarchy_theme(),
+            "appearances": get_all_appearances(),
+        }, indent=2))
+        return 0
+
+    if sub == "apply":
+        if len(args) < 2:
+            return 1
+        target_id = args[1].strip()
+        all_apps = get_all_appearances()
+        profile = next((a for a in all_apps if a.get("id") == target_id), None)
+        if not profile:
+            print(f"cosmos-ctl: unknown appearance '{target_id}'", file=sys.stderr)
+            return 1
+
+        # Save Undo snapshot if not already previewing uncommitted changes
+        if not cfg.get("undoPending", False):
+            snapshot = {
+                "theme": current_omarchy_theme(),
+                "wallpaper": current_omarchy_wallpaper(),
+                "barStyle": cfg.get("barStyle", "frame"),
+                "menuStyle": cfg.get("menuStyle", "left"),
+                "pinLayout": cfg.get("pinLayout", "left"),
+                "rainMode": cfg.get("rainMode", "drizzle"),
+                "showWallpaperLogo": bool(cfg.get("showWallpaperLogo", True)),
+                "logoStyle": cfg.get("logoStyle", "warm"),
+                "logoScale": cfg.get("logoScale", "medium"),
+                "activeAppearance": cfg.get("activeAppearance", ""),
+            }
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            UNDO_SNAPSHOT_PATH.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
+
+        cfg["barStyle"] = profile.get("barStyle", "islands")
+        cfg["menuStyle"] = profile.get("menuStyle", "left")
+        cfg["pinLayout"] = profile.get("pinLayout", "left")
+        cfg["rainMode"] = profile.get("rainMode", "drizzle")
+        cfg["showWallpaperLogo"] = bool(profile.get("showWallpaperLogo", True))
+        cfg["logoStyle"] = profile.get("logoStyle", "warm")
+        cfg["logoScale"] = profile.get("logoScale", "medium")
+        cfg["activeAppearance"] = target_id
+        cfg["undoPending"] = True
+        save_config(cfg)
+        notify_all()
+
+        apply_theme_and_wallpaper(str(profile.get("theme") or ""), str(profile.get("wallpaper") or ""))
+        print(target_id)
+        return 0
+
+    if sub == "undo":
+        try:
+            snap = json.loads(UNDO_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            cfg["undoPending"] = False
+            save_config(cfg)
+            notify_all()
+            return 0
+
+        for k in ("barStyle", "menuStyle", "pinLayout", "rainMode", "showWallpaperLogo", "logoStyle", "logoScale", "activeAppearance"):
+            if k in snap:
+                cfg[k] = snap[k]
+        cfg["undoPending"] = False
+        save_config(cfg)
+        try:
+            UNDO_SNAPSHOT_PATH.unlink()
+        except OSError:
+            pass
+        notify_all()
+        apply_theme_and_wallpaper(str(snap.get("theme") or ""), str(snap.get("wallpaper") or ""))
+        print("undone")
+        return 0
+
+    if sub == "keep":
+        cfg["undoPending"] = False
+        save_config(cfg)
+        try:
+            UNDO_SNAPSHOT_PATH.unlink()
+        except OSError:
+            pass
+        shell_notify("cosmos.settings", "syncConfig")
+        print("kept")
+        return 0
+
+    if sub == "save":
+        raw_name = " ".join(args[1:]).strip() or "My Appearance"
+        slug = re.sub(r"[^a-z0-9]+", "-", raw_name.lower()).strip("-") or "custom"
+        custom_id = f"user-{slug}"
+        cur_theme = current_omarchy_theme()
+        cur_wp = current_omarchy_wallpaper()
+
+        bar_lbl = STYLE_LABELS.get(cfg.get("barStyle", "frame"), ("Bar", ""))[0]
+        logo_lbl = f"{cfg.get('logoStyle', 'warm')} logo" if cfg.get("showWallpaperLogo", True) else "no logo"
+        subtitle = f"{cur_theme} · {bar_lbl.lower()} · {logo_lbl}"
+
+        new_entry = {
+            "id": custom_id,
+            "name": raw_name,
+            "subtitle": subtitle,
+            "theme": cur_theme,
+            "wallpaper": cur_wp,
+            "barStyle": cfg.get("barStyle", "frame"),
+            "menuStyle": cfg.get("menuStyle", "left"),
+            "pinLayout": cfg.get("pinLayout", "left"),
+            "rainMode": cfg.get("rainMode", "drizzle"),
+            "showWallpaperLogo": bool(cfg.get("showWallpaperLogo", True)),
+            "logoStyle": cfg.get("logoStyle", "warm"),
+            "logoScale": cfg.get("logoScale", "medium"),
+            "builtin": False,
+        }
+        custom_list = [x for x in load_custom_appearances() if x.get("id") != custom_id]
+        custom_list.append(new_entry)
+        save_custom_appearances(custom_list)
+
+        cfg["activeAppearance"] = custom_id
+        cfg["undoPending"] = False
+        save_config(cfg)
+        shell_notify("cosmos.settings", "syncConfig")
+        print(custom_id)
+        return 0
+
+    if sub == "delete":
+        if len(args) < 2:
+            return 1
+        del_id = args[1].strip()
+        custom_list = [x for x in load_custom_appearances() if x.get("id") != del_id]
+        save_custom_appearances(custom_list)
+        shell_notify("cosmos.settings", "syncConfig")
+        print(del_id)
+        return 0
+
+    return 1
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(
+            "Usage: cosmos-ctl <init | bar-style | menu-style | rain-mode | lock-preview | "
+            "logo | arrival | appearance | settings | studio | pin-layout | player-mode | "
+            "focus-agent | music-open | window-hide | window-restore | desktop-toggle | status>"
+        )
+        return 0
+
+    sub = argv[0]
+    if sub == "init":
+        return cmd_init()
+    if sub == "bar-style":
+        return cmd_bar_style(argv[1:])
+    if sub == "menu-style":
+        return cmd_menu_style(argv[1:])
+    if sub == "rain-mode":
+        return cmd_rain_mode(argv[1:])
+    if sub == "lock-preview":
+        return cmd_lock_preview(argv[1:])
+    if sub == "logo":
+        return cmd_logo(argv[1:])
+    if sub == "arrival":
+        return cmd_arrival(argv[1:])
+    if sub == "appearance":
+        return cmd_appearance(argv[1:])
+    if sub == "settings":
+        return cmd_settings(argv[1:])
+    if sub == "studio":
+        return cmd_studio(argv[1:])
+    if sub == "pin-layout":
+        return cmd_pin_layout(argv[1:])
+    if sub == "player-mode":
+        return cmd_player_mode(argv[1:])
+    if sub == "focus-agent":
+        return cmd_focus_agent(argv[1:])
+    if sub == "music-open":
+        return cmd_music_open()
+    if sub == "window-hide":
+        return cmd_window_hide()
+    if sub == "window-restore":
+        return cmd_window_restore()
+    if sub == "desktop-toggle":
+        return cmd_desktop_toggle()
+    if sub == "status":
+        print(json.dumps(load_config(), indent=2))
+        return 0
+
+    print(f"cosmos-ctl: unknown command '{sub}'", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

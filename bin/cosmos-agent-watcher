@@ -1,0 +1,781 @@
+#!/usr/bin/env python3
+"""
+cosmos-agent-watcher — Real-time local watcher for Antigravity, ChatGPT, Claude Code, and Codex.
+Writes ~/.local/state/cosmos/agents-live.json atomically and nudges omarchy-shell only on change.
+Never sends data over the network; inspects only local Hyprland windows, /proc, and local agent state metadata.
+"""
+
+import json
+import os
+import re
+import signal
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+HOME = Path.home()
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", str(HOME / ".local/state"))) / "cosmos"
+OUT_PATH = STATE_DIR / "agents-live.json"
+
+TERMINAL_CLASSES = {
+    "foot",
+    "footclient",
+    "alacritty",
+    "kitty",
+    "ghostty",
+    "com.mitchellh.ghostty",
+    "wezterm",
+    "org.wezfurlong.wezterm",
+}
+
+TOOL_CHILD_COMMS = {
+    "bash",
+    "sh",
+    "zsh",
+    "git",
+    "rg",
+    "grep",
+    "find",
+    "python",
+    "python3",
+    "node",
+    "bun",
+    "npm",
+    "pnpm",
+    "yarn",
+    "cargo",
+    "rustc",
+    "go",
+    "make",
+    "cmake",
+    "pytest",
+    "curl",
+}
+
+
+def read_tail_lines(path: Path, max_bytes: int = 12288) -> list[str]:
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as fh:
+            if size > max_bytes:
+                fh.seek(size - max_bytes)
+            raw = fh.read().decode("utf-8", errors="replace")
+        lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+        if size > max_bytes and len(lines) > 1:
+            lines = lines[1:]
+        return lines
+    except Exception:
+        return []
+
+
+def text_asks_question(text: str) -> bool:
+    if not text:
+        return False
+    cleaned = re.sub(r"[`*_>\s]+$", "", text.strip())
+    tail = cleaned[-220:] if len(cleaned) > 220 else cleaned
+    return tail.endswith("?")
+
+
+def get_hypr_clients() -> list[dict]:
+    try:
+        res = subprocess.run(["hyprctl", "clients", "-j"], capture_output=True, text=True, timeout=1.8)
+        if res.returncode == 0:
+            data = json.loads(res.stdout)
+            if isinstance(data, list):
+                return data
+    except Exception:
+        pass
+    return []
+
+
+def scan_proc() -> tuple[dict[int, dict], dict[int, list[int]]]:
+    procs: dict[int, dict] = {}
+    children: dict[int, list[int]] = {}
+    proc_root = Path("/proc")
+    for entry in proc_root.iterdir():
+        name = entry.name
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        try:
+            stat_raw = (entry / "stat").read_text(encoding="utf-8", errors="replace")
+            rparen = stat_raw.rfind(")")
+            if rparen == -1:
+                continue
+            comm = stat_raw[stat_raw.find("(") + 1 : rparen]
+            fields = stat_raw[rparen + 2 :].split()
+            ppid = int(fields[1])
+            utime = int(fields[11])
+            stime = int(fields[12])
+            cmdline_bytes = (entry / "cmdline").read_bytes()
+            argv = [a.decode("utf-8", errors="replace") for a in cmdline_bytes.split(b"\x00") if a]
+            procs[pid] = {
+                "pid": pid,
+                "ppid": ppid,
+                "comm": comm,
+                "argv": argv,
+                "ticks": utime + stime,
+            }
+            children.setdefault(ppid, []).append(pid)
+        except Exception:
+            continue
+    return procs, children
+
+
+def get_cwd_name(pid: int) -> str:
+    try:
+        target = os.readlink(f"/proc/{pid}/cwd")
+        p = Path(target)
+        if p == HOME:
+            return "~"
+        return p.name or str(p)
+    except Exception:
+        return ""
+
+
+def descendants(root_pid: int, children: dict[int, list[int]]) -> list[int]:
+    out: list[int] = []
+    stack = list(children.get(root_pid, []))
+    seen = {root_pid}
+    while stack:
+        cur = stack.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        out.append(cur)
+        stack.extend(children.get(cur, []))
+    return out
+
+
+def classify_cli_agent(proc: dict) -> str | None:
+    comm = proc["comm"].lower()
+    argv_joined = " ".join(proc["argv"]).lower()
+
+    if "cosmos-agent-watcher" in argv_joined or "grep" in comm:
+        return None
+
+    # Claude Code
+    if comm == "claude" or re.search(r"(^|/)(claude|claude-code)(\s|$)", argv_joined) or "@anthropic-ai/claude-code" in argv_joined:
+        return "Claude Code"
+
+    # Codex (interactive CLI/TUI, ignore background proxy daemon `--port 10100`)
+    if "--ocx-internal-launch-proof" in argv_joined or ("opencodex" in argv_joined and " start" in argv_joined):
+        return None
+    if comm in ("codex", "codex-linux-x64", "codex-aarch64") or re.search(r"(^|/)(codex|opencodex)(\s|$)", argv_joined) or "@openai/codex" in argv_joined:
+        return "Codex"
+
+    # OpenCode / Aider / Hermes
+    if comm == "opencode" or re.search(r"(^|/)opencode(\s|$)", argv_joined):
+        return "OpenCode"
+    if comm == "aider" or re.search(r"(^|/)aider(\s|$)", argv_joined):
+        return "Aider"
+    if "gateway run" in argv_joined or "hermes_cli.main gateway" in argv_joined:
+        return None
+    if comm == "hermes" or re.search(r"(^|/)hermes(\s|$)", argv_joined) or "hermes_cli" in argv_joined:
+        return "Hermes"
+
+    return None
+
+
+def clean_term_title(win_title: str, cwd_name: str, agent_name: str) -> str:
+    t = (win_title or "").strip()
+    # Ignore generic shell prompt titles like user@host:~
+    if not t or re.match(r"^[\w.-]+@[\w.-]+:", t) or t.lower() in ("foot", "alacritty", "kitty", "ghostty", "claude", "codex"):
+        if cwd_name and cwd_name != "~":
+            return f"{cwd_name}"
+        return f"{agent_name} session"
+    t = re.sub(r"^[✳⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏●•\s]+", "", t).strip()
+    return t or cwd_name or f"{agent_name} session"
+
+
+def inspect_claude_state(cwd_path_str: str, now: float) -> tuple[str | None, str | None]:
+    """Check ~/.claude/projects for recent JSONL transcript activity."""
+    projects_dir = HOME / ".claude" / "projects"
+    if not projects_dir.is_dir():
+        return None, None
+    newest_file: Path | None = None
+    newest_mtime = 0.0
+    try:
+        for f in projects_dir.rglob("*.jsonl"):
+            st = f.stat()
+            if st.st_mtime > newest_mtime:
+                newest_mtime = st.st_mtime
+                newest_file = f
+    except Exception:
+        return None, None
+
+    if not newest_file or (now - newest_mtime) > 21600:
+        return None, None
+
+    if (now - newest_mtime) < 5.5:
+        return "working", None
+
+    lines = read_tail_lines(newest_file, 8192)
+    for raw in reversed(lines):
+        try:
+            obj = json.loads(raw)
+            msg = obj.get("message") or {}
+            role = obj.get("type") or msg.get("role") or ""
+            if role == "assistant":
+                content = msg.get("content")
+                text_parts = []
+                if isinstance(content, str):
+                    text_parts.append(content)
+                elif isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict):
+                            if part.get("type") == "tool_use":
+                                return "needs_you", None
+                            if part.get("type") == "text":
+                                text_parts.append(str(part.get("text") or ""))
+                joined = "\n".join(text_parts)
+                if text_asks_question(joined):
+                    return "needs_you", None
+                return "finished", None
+        except Exception:
+            continue
+    return None, None
+
+
+def inspect_codex_state(now: float) -> dict | None:
+    """Inspect local OpenAI ChatGPT / Codex desktop rollout logs in ~/.codex/."""
+    codex_dir = HOME / ".codex"
+    sessions_dir = codex_dir / "sessions"
+    if not sessions_dir.is_dir():
+        return None
+
+    thread_names: dict[str, str] = {}
+    idx_file = codex_dir / "session_index.jsonl"
+    if idx_file.is_file():
+        for raw in read_tail_lines(idx_file, 32768):
+            try:
+                obj = json.loads(raw)
+                tid = str(obj.get("id") or "")
+                tname = str(obj.get("thread_name") or "").strip()
+                if tid and tname:
+                    thread_names[tid] = tname
+            except Exception:
+                continue
+
+    newest_file: Path | None = None
+    newest_mtime = 0.0
+    try:
+        for f in sessions_dir.rglob("*.jsonl"):
+            st = f.stat()
+            if st.st_mtime > newest_mtime:
+                newest_mtime = st.st_mtime
+                newest_file = f
+    except Exception:
+        return None
+
+    if not newest_file:
+        return None
+
+    age = now - newest_mtime
+    lines = read_tail_lines(newest_file, 16384)
+    thread_id = ""
+    status = "working" if age < 6.0 else "finished"
+    last_text = ""
+
+    for raw in reversed(lines):
+        try:
+            obj = json.loads(raw)
+            payload = obj.get("payload") or {}
+            if not isinstance(payload, dict):
+                continue
+            if not thread_id:
+                thread_id = str(payload.get("thread_id") or payload.get("session_id") or "")
+            otype = str(obj.get("type") or "")
+            ptype = str(payload.get("type") or "")
+
+            if otype == "event_msg":
+                if ptype in ("exec_approval_request", "apply_patch_approval_request", "request_user_input"):
+                    status = "needs_you"
+                    break
+                if ptype in ("task_started", "turn_started", "exec_command_begin", "mcp_tool_call_begin", "web_search_begin") and age < 90:
+                    status = "working"
+                    break
+                if ptype == "task_complete":
+                    last_text = str(payload.get("last_agent_message") or "")
+                    status = "needs_you" if (age < 7200 and text_asks_question(last_text)) else "finished"
+                    break
+            elif otype == "response_item" and payload.get("role") == "assistant" and not last_text:
+                parts = payload.get("content") or []
+                if isinstance(parts, list):
+                    last_text = "\n".join(
+                        str(p.get("text") or "") for p in parts if isinstance(p, dict) and p.get("text")
+                    )
+        except Exception:
+            continue
+
+    if not thread_id:
+        m = re.search(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", newest_file.name)
+        if m:
+            thread_id = m.group(1)
+
+    return {
+        "mtime": newest_mtime,
+        "status": status,
+        "title": thread_names.get(thread_id, "") if age < 43200 else "",
+    }
+
+
+def inspect_hermes_state(now: float) -> dict | None:
+    """Inspect local Hermes SQLite state in ~/.hermes/state.db (read-only)."""
+    db_path = HOME / ".hermes" / "state.db"
+    if not db_path.is_file():
+        return None
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=0.35)
+        try:
+            lease = con.execute(
+                "SELECT conversation_id, acquired_at FROM session_turn_leases WHERE expires_at > ? LIMIT 1",
+                (now,),
+            ).fetchone()
+            sess = con.execute(
+                "SELECT id, title, model, COALESCE(last_activity_at, started_at) AS ts, cwd "
+                "FROM sessions WHERE source IN ('cli', 'tui') AND ended_at IS NULL "
+                "ORDER BY ts DESC LIMIT 1"
+            ).fetchone()
+            if not sess:
+                sess = con.execute(
+                    "SELECT id, title, model, COALESCE(last_activity_at, started_at) AS ts, cwd "
+                    "FROM sessions WHERE source IN ('cli', 'tui') "
+                    "ORDER BY ts DESC LIMIT 1"
+                ).fetchone()
+            if not sess:
+                return {"status": "working" if lease else "finished", "title": "", "mtime": now - 30}
+
+            sid, title, model, ts, cwd = sess
+            ts_val = float(ts or (now - 30))
+            status = "working" if (lease or (now - ts_val) < 5.0) else "finished"
+
+            if status != "working":
+                last_msg = con.execute(
+                    "SELECT role, content, timestamp FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+                    (sid,),
+                ).fetchone()
+                if last_msg:
+                    m_role, m_content, m_ts = last_msg
+                    if m_ts:
+                        ts_val = max(ts_val, float(m_ts))
+                    if m_role == "user" and (now - float(m_ts or 0)) < 60:
+                        status = "working"
+                    elif m_role == "assistant" and (now - float(m_ts or 0)) < 7200 and text_asks_question(str(m_content or "")):
+                        status = "needs_you"
+
+            return {
+                "status": status,
+                "title": str(title or "").strip(),
+                "model": str(model or "").strip(),
+                "cwd": Path(str(cwd)).name if cwd else "",
+                "mtime": ts_val,
+            }
+        finally:
+            con.close()
+    except Exception:
+        return None
+
+
+def inspect_antigravity_brains(count: int, now: float) -> list[dict]:
+    """Inspect recent Antigravity conversation transcripts in ~/.gemini/antigravity/brain/."""
+    brain_dir = HOME / ".gemini" / "antigravity" / "brain"
+    if not brain_dir.is_dir() or count <= 0:
+        return []
+    candidates: list[tuple[float, Path]] = []
+    try:
+        for sub in brain_dir.iterdir():
+            if not sub.is_dir():
+                continue
+            tr = sub / ".system_generated" / "logs" / "transcript.jsonl"
+            if tr.is_file():
+                mtime = tr.stat().st_mtime
+                if (now - mtime) < 43200:
+                    candidates.append((mtime, tr))
+    except Exception:
+        return []
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    results: list[dict] = []
+    for mtime, tr in candidates[:count]:
+        age = now - mtime
+        lines = read_tail_lines(tr, 16384)
+        status = "finished"
+        if lines:
+            try:
+                last = json.loads(lines[-1])
+                step_type = str(last.get("type") or "")
+                step_status = str(last.get("status") or "")
+                source = str(last.get("source") or "")
+                content = str(last.get("content") or "")
+                tool_calls = last.get("tool_calls") or []
+
+                has_ask = any(
+                    isinstance(tc, dict) and tc.get("name") == "ask_question"
+                    for tc in (tool_calls if isinstance(tool_calls, list) else [])
+                )
+
+                if step_status not in ("DONE", "ERROR", "") and age < 90:
+                    status = "working"
+                elif source == "USER_EXPLICIT" and age < 90:
+                    status = "working"
+                elif step_type != "PLANNER_RESPONSE" and age < 45:
+                    status = "working"
+                elif step_type == "PLANNER_RESPONSE":
+                    if tool_calls and not has_ask and age < 45:
+                        status = "working"
+                    elif has_ask or text_asks_question(content):
+                        status = "needs_you"
+                    else:
+                        status = "finished"
+            except Exception:
+                if age < 8:
+                    status = "working"
+        results.append({"mtime": mtime, "status": status})
+    return results
+
+
+class Watcher:
+    def __init__(self) -> None:
+        self.prev_ticks: dict[int, tuple[int, float]] = {}
+        self.last_active_ts: dict[int, float] = {}
+        self.last_serialized: str = ""
+
+    def snapshot(self) -> dict:
+        now = time.time()
+        clients = get_hypr_clients()
+        procs, children = scan_proc()
+
+        agents: list[dict] = []
+        seen_agent_pids: set[int] = set()
+
+        # 1. Antigravity IDE windows
+        agy_windows = [
+            c
+            for c in clients
+            if "antigravity" in str(c.get("class") or "").lower() or str(c.get("class") or "").lower() == "agy"
+        ]
+        agy_brains = inspect_antigravity_brains(max(1, len(agy_windows)), now)
+        for idx, win in enumerate(agy_windows):
+            raw_title = str(win.get("title") or "Antigravity")
+            clean_title = re.sub(r"\s*[-—]\s*Antigravity\s*$", "", raw_title, flags=re.IGNORECASE).strip() or "Antigravity Workspace"
+            brain_info = agy_brains[idx] if idx < len(agy_brains) else {"status": "finished", "mtime": now - 60}
+            ws = win.get("workspace") or {}
+            agents.append(
+                {
+                    "id": f"agy-{win.get('address', idx)}",
+                    "agentName": "Antigravity",
+                    "status": brain_info["status"],
+                    "title": clean_title,
+                    "project": "",
+                    "windowAddress": str(win.get("address") or ""),
+                    "workspaceName": str(ws.get("name") or ""),
+                    "updatedAt": brain_info["mtime"],
+                }
+            )
+
+        # 2. Native AI Desktop & Webapp windows (Claude Desktop, ChatGPT, Codex, Cursor, Windsurf, Gemini, Grok)
+        codex_meta: dict | None = None
+        for win in clients:
+            cls = str(win.get("class") or "").lower()
+            init_cls = str(win.get("initialClass") or "").lower()
+            combined_cls = f"{cls} {init_cls}"
+            win_pid = int(win.get("pid") or 0)
+            if cls in TERMINAL_CLASSES or "terminal" in cls or "antigravity" in combined_cls or cls == "agy":
+                continue
+
+            agent_label = ""
+            if "claude" in combined_cls or "anthropic" in combined_cls:
+                agent_label = "Claude"
+            elif "chatgpt" in combined_cls or "openai" in combined_cls:
+                agent_label = "ChatGPT"
+            elif "codex" in combined_cls:
+                agent_label = "Codex"
+            elif "cursor" in combined_cls:
+                agent_label = "Cursor"
+            elif "windsurf" in combined_cls:
+                agent_label = "Windsurf"
+            elif "gemini.google.com" in combined_cls:
+                agent_label = "Gemini"
+            elif "grok.com" in combined_cls:
+                agent_label = "Grok"
+            elif "perplexity.ai" in combined_cls:
+                agent_label = "Perplexity"
+
+            if not agent_label:
+                continue
+
+            raw_title = str(win.get("title") or agent_label).strip()
+            clean_win_title = re.sub(
+                r"\s*[-—·]\s*(Claude|ChatGPT|Codex|Cursor|Windsurf|Gemini|Grok|Perplexity)\s*$",
+                "",
+                raw_title,
+                flags=re.IGNORECASE,
+            ).strip()
+
+            status = "finished"
+            updated_at = now - 40
+            fallback_title = f"{agent_label} Desktop"
+
+            if agent_label in ("ChatGPT", "Codex"):
+                if codex_meta is None:
+                    codex_meta = inspect_codex_state(now) or {}
+                if codex_meta.get("status"):
+                    status = str(codex_meta["status"])
+                if codex_meta.get("mtime"):
+                    updated_at = float(codex_meta["mtime"])
+                if codex_meta.get("title"):
+                    fallback_title = str(codex_meta["title"])
+            elif agent_label == "Claude":
+                c_status, _ = inspect_claude_state("", now)
+                if c_status:
+                    status = c_status
+
+            generic_titles = {"claude", "chatgpt", "codex", "cursor", "windsurf", "gemini", "grok", "perplexity", "new chat", "nuevo chat"}
+            if clean_win_title and clean_win_title.lower() not in generic_titles:
+                display_title = clean_win_title
+            else:
+                display_title = fallback_title
+
+            # Braille spinner in window title (used during streaming by several web/electron clients)
+            if any(ch in raw_title for ch in "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"):
+                status = "working"
+                updated_at = now
+
+            if win_pid > 0:
+                sub_pids = descendants(win_pid, children)
+                # Mark descendant CLI helpers as seen so they aren't double-counted
+                for sp in sub_pids:
+                    seen_agent_pids.add(sp)
+
+                active_tool = any(
+                    (procs.get(sp) or {}).get("comm", "").lower() in ("bash", "sh", "zsh", "git", "rg", "grep", "find", "python", "python3", "cargo", "make", "pytest")
+                    for sp in sub_pids
+                )
+                total_ticks = sum(
+                    (procs.get(sp) or {}).get("ticks", 0)
+                    for sp in [win_pid, *sub_pids]
+                    if "--type=gpu-process" not in " ".join((procs.get(sp) or {}).get("argv", []))
+                )
+                prev_t, _ = self.prev_ticks.get(win_pid, (total_ticks, now))
+                tick_delta = total_ticks - prev_t
+                self.prev_ticks[win_pid] = (total_ticks, now)
+
+                if active_tool or tick_delta > 45:
+                    self.last_active_ts[win_pid] = now
+
+                if active_tool or (now - self.last_active_ts.get(win_pid, 0.0)) < 4.5:
+                    status = "working"
+                    updated_at = now
+
+            ws = win.get("workspace") or {}
+            agents.append(
+                {
+                    "id": f"{agent_label.lower()}-{win.get('address')}",
+                    "agentName": agent_label,
+                    "status": status,
+                    "title": display_title,
+                    "project": "",
+                    "windowAddress": str(win.get("address") or ""),
+                    "workspaceName": str(ws.get("name") or ""),
+                    "updatedAt": updated_at,
+                }
+            )
+
+        # 3. Terminal-hosted agents (Claude Code & Codex CLI)
+        for win in clients:
+            cls = str(win.get("class") or "").lower()
+            win_pid = int(win.get("pid") or 0)
+            if win_pid <= 0:
+                continue
+
+            if cls not in TERMINAL_CLASSES and "terminal" not in cls:
+                continue
+
+            desc = descendants(win_pid, children)
+            for dpid in desc:
+                if dpid in seen_agent_pids:
+                    continue
+                pinfo = procs.get(dpid)
+                if not pinfo:
+                    continue
+                agent_name = classify_cli_agent(pinfo)
+                if not agent_name:
+                    continue
+
+                seen_agent_pids.add(dpid)
+                # Avoid duplicate child node processes of the same CLI agent
+                for sub_pid in descendants(dpid, children):
+                    seen_agent_pids.add(sub_pid)
+
+                cwd_name = get_cwd_name(dpid)
+                sub_pids = descendants(dpid, children)
+                has_tool_child = any(
+                    (procs.get(sp) or {}).get("comm", "").lower() in TOOL_CHILD_COMMS for sp in sub_pids
+                )
+
+                total_ticks = pinfo["ticks"] + sum((procs.get(sp) or {}).get("ticks", 0) for sp in sub_pids)
+                prev_t, prev_ts = self.prev_ticks.get(dpid, (total_ticks, now))
+                tick_delta = total_ticks - prev_t
+                self.prev_ticks[dpid] = (total_ticks, now)
+
+                if has_tool_child or tick_delta > 3:
+                    self.last_active_ts[dpid] = now
+
+                recent_cpu = (now - self.last_active_ts.get(dpid, 0.0)) < 4.5
+                win_title = str(win.get("title") or "")
+
+                status = "working" if (has_tool_child or recent_cpu) else "finished"
+                custom_title = ""
+                if agent_name == "Claude Code" and status != "working":
+                    c_status, _ = inspect_claude_state(cwd_name, now)
+                    if c_status:
+                        status = c_status
+                elif agent_name == "Codex" and status != "working":
+                    if "?" in win_title or "approve" in win_title.lower():
+                        status = "needs_you"
+                elif agent_name == "Hermes":
+                    h_meta = inspect_hermes_state(now) or {}
+                    if h_meta.get("status") == "working":
+                        status = "working"
+                    elif status != "working" and h_meta.get("status"):
+                        status = str(h_meta["status"])
+                    if h_meta.get("title"):
+                        custom_title = str(h_meta["title"])
+                    if (not cwd_name or cwd_name == "~") and h_meta.get("cwd"):
+                        cwd_name = str(h_meta["cwd"])
+
+                # Braille spinner in terminal title (Claude Code sets ⠋/⠙/... while thinking!)
+                if any(ch in win_title for ch in "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"):
+                    status = "working"
+
+                ws = win.get("workspace") or {}
+                agents.append(
+                    {
+                        "id": f"{agent_name.lower().replace(' ', '-')}-{dpid}",
+                        "agentName": agent_name,
+                        "status": status,
+                        "title": custom_title or clean_term_title(win_title, cwd_name, agent_name),
+                        "project": cwd_name,
+                        "windowAddress": str(win.get("address") or ""),
+                        "workspaceName": str(ws.get("name") or ""),
+                        "updatedAt": self.last_active_ts.get(dpid, float((h_meta.get("mtime") if agent_name == "Hermes" else 0) or (now - 10))),
+                    }
+                )
+
+        # Clean stale PIDs
+        live_pids = set(procs.keys())
+        self.prev_ticks = {k: v for k, v in self.prev_ticks.items() if k in live_pids}
+        self.last_active_ts = {k: v for k, v in self.last_active_ts.items() if k in live_pids}
+
+        # Sort by urgency: needs_you (0) -> working (1) -> finished (2)
+        rank = {"needs_you": 0, "working": 1, "finished": 2}
+        agents.sort(key=lambda a: (rank.get(a["status"], 3), -float(a.get("updatedAt", 0))))
+
+        needs_you = sum(1 for a in agents if a["status"] == "needs_you")
+        working = sum(1 for a in agents if a["status"] == "working")
+        finished = sum(1 for a in agents if a["status"] == "finished")
+        total = len(agents)
+
+        if needs_you > 0:
+            headline_status = "needs_you"
+            headline_label = "Has a question"
+        elif working > 0:
+            headline_status = "working"
+            headline_label = "Working"
+        elif finished > 0:
+            headline_status = "finished"
+            headline_label = "Ready"
+        else:
+            headline_status = "idle"
+            headline_label = "No active agents"
+
+        most_urgent = None
+        if agents:
+            top = dict(agents[0])
+            top.pop("updatedAt", None)
+            most_urgent = top
+
+        crew = []
+        for a in agents:
+            item = dict(a)
+            item.pop("updatedAt", None)
+            crew.append(item)
+
+        return {
+            "version": 1,
+            "needsYouCount": needs_you,
+            "workingCount": working,
+            "finishedCount": finished,
+            "totalCount": total,
+            "headlineStatus": headline_status,
+            "headlineLabel": headline_label,
+            "mostUrgent": most_urgent,
+            "crew": crew,
+        }
+
+    def write_if_changed(self, data: dict, force: bool = False) -> bool:
+        serialized = json.dumps(data, indent=2, sort_keys=True)
+        if not force and serialized == self.last_serialized and OUT_PATH.exists():
+            return False
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".agents.", dir=str(STATE_DIR))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(serialized + "\n")
+            os.replace(tmp, OUT_PATH)
+        finally:
+            if os.path.exists(tmp):
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+        self.last_serialized = serialized
+        subprocess.run(
+            ["omarchy-shell", "-q", "cosmos.studio", "syncAgents"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            ["omarchy-shell", "-q", "cosmos.agent-pill", "syncAgents"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+
+
+def main() -> int:
+    once = "--once" in sys.argv[1:]
+    watcher = Watcher()
+    if once:
+        snap = watcher.snapshot()
+        watcher.write_if_changed(snap, force=True)
+        print(json.dumps(snap, indent=2))
+        return 0
+
+    stop = False
+
+    def handle_sig(_sig, _frame):
+        nonlocal stop
+        stop = True
+
+    signal.signal(signal.SIGTERM, handle_sig)
+    signal.signal(signal.SIGINT, handle_sig)
+
+    first = True
+    while not stop:
+        try:
+            snap = watcher.snapshot()
+            watcher.write_if_changed(snap, force=first)
+            first = False
+        except Exception:
+            pass
+        time.sleep(2.0)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

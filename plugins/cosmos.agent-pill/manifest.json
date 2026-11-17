@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "cosmos.agent-pill",
+  "name": "Cosmos Agent Pill",
+  "version": "1.0.0",
+  "author": "Javier Pastor",
+  "description": "Live status pill for Antigravity, Claude Code, and Codex with 1-click Cosmos Studio toggle",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "AgentPill.qml"
+  },
+  "barWidget": {
+    "displayName": "Cosmos Agents",
+    "description": "Live AI coding agent status and Studio toggle",
+    "category": "System",
+    "defaultSection": "right",
+    "allowMultiple": false
+  }
+}

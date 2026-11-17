@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "cosmos.background",
+  "name": "Cosmos Background",
+  "version": "1.0.0",
+  "author": "Javier Pastor",
+  "description": "Desktop background renderer with toggleable pixel-art OMARCHY gradient logo and Arrival support",
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "Background.qml"
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.background"
+  }
+}

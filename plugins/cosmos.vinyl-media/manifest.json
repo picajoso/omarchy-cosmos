@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "cosmos.vinyl-media",
+  "name": "Cosmos Vinyl Media",
+  "version": "0.1.0",
+  "author": "Javier Pastor",
+  "description": "Center protruding vinyl disc and YouTube Music / MPRIS controls for the Cosmos bar",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "VinylMedia.qml"
+  },
+  "barWidget": {
+    "displayName": "Cosmos Vinyl Media",
+    "description": "Protruding album-art vinyl disc and playback controls",
+    "category": "Media",
+    "defaultSection": "centerBegin",
+    "allowMultiple": false
+  }
+}

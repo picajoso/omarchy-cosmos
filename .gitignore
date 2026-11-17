@@ -1,0 +1,14 @@
+# Reference media & local backups (never tracked)
+*.mp4
+*.mkv
+*.webm
+*.mov
+*.avi
+backups/
+
+# Python bytecode & editor artifacts
+__pycache__/
+*.py[cod]
+.DS_Store
+*~
+.swp

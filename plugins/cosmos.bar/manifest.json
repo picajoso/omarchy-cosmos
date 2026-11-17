@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "cosmos.bar",
+  "name": "Cosmos Bar",
+  "version": "0.1.0",
+  "author": "Javier Pastor",
+  "description": "Cosmos multi-style floating bar (Islands, Full width, Glass, Transparent) with live style toast",
+  "omarchy": {
+    "clonedFrom": "omarchy.bar"
+  },
+  "kinds": [
+    "bar"
+  ],
+  "entryPoints": {
+    "bar": "Bar.qml"
+  }
+}

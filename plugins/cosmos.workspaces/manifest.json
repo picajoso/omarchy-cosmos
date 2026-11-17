@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "cosmos.workspaces",
+  "name": "Cosmos Workspaces",
+  "version": "0.1.0",
+  "author": "Javier Pastor",
+  "description": "Animated pill and dot workspace indicators for Omarchy Cosmos",
+  "omarchy": {
+    "clonedFrom": "omarchy.workspaces"
+  },
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Workspaces.qml"
+  },
+  "barWidget": {
+    "displayName": "Cosmos Workspaces",
+    "description": "Animated pill and dot workspace indicators",
+    "category": "Compositor",
+    "allowMultiple": false
+  }
+}

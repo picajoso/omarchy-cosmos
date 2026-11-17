@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "cosmos.settings",
+  "name": "Cosmos Appearances & Settings",
+  "version": "1.0.0",
+  "author": "Javier Pastor",
+  "description": "Cosmos Appearances meta-profile switcher with live Undo/Keep and unified customization drawer",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Cosmos Settings",
+    "description": "Open Cosmos Appearances and customization drawer",
+    "category": "Appearance",
+    "allowMultiple": false
+  }
+}
