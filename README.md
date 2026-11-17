@@ -1,20 +1,102 @@
+<div align="center">
+
 # Omarchy Cosmos
+
+**A live AI-native, shader-powered desktop suite for Omarchy 4.x**
+
+[![Omarchy 4.x](https://img.shields.io/badge/Omarchy-4.x-7dcfff?style=flat-square)](https://omarchy.org)
+[![Quickshell + Qt6 GLSL](https://img.shields.io/badge/Quickshell-Qt6%20%2B%20GLSL-bb9af7?style=flat-square)](#features)
+[![Hyprland](https://img.shields.io/badge/Compositor-Hyprland-9ece6a?style=flat-square)](#keyboard-shortcuts)
+[![License: MIT](https://img.shields.io/badge/License-MIT-f7768e?style=flat-square)](./LICENSE)
+
+<br />
+
+<a href="./assets/screenshots/01-hero-hermes-browser-studio.png">
+  <img src="./assets/screenshots/01-hero-hermes-browser-studio.png" alt="Omarchy Cosmos — Hermes Agent, Browser, Islands Bar & Cosmos Studio" width="100%" />
+</a>
+
+*`Islands` frosted-glass bar · **Hermes Agent** + Chromium + **Cosmos Studio** (live Mecha-Chibi AI crew & spinning MPRIS vinyl turntable)*
+
+</div>
+
+---
 
 **Omarchy Cosmos** is a lightweight, 100% open-source (`MIT`) desktop suite for **Omarchy 4.x** (`quickshell` + `hyprland` + `owe` + `qt6-shadertools`).
 
-Every plugin, GLSL shader, QML scene, and CLI daemon is built natively on top of Omarchy's official plugin architecture (`~/.config/omarchy/plugins/`) without touching `/usr/share/omarchy/`.
+Every plugin, GLSL shader, procedural QML scene, and local watcher daemon is built natively on top of Omarchy's official plugin architecture (`~/.config/omarchy/plugins/`) without modifying `/usr/share/omarchy/`.
+
+---
+
+## Screenshots
+
+> Click any image to view it at native **2560×1440** resolution.
+
+### Multi-Agent Tiling Workflow
+
+<a href="./assets/screenshots/02-workflow-hermes-btop-chatgpt.png">
+  <img src="./assets/screenshots/02-workflow-hermes-btop-chatgpt.png" alt="Multi-Window Workflow — Hermes Agent, btop, and ChatGPT" width="100%" />
+</a>
+
+*Full-width frosted `Bar` (`Tokyo Night`) · **Hermes Agent** + `btop` telemetry + **ChatGPT** client tiled in Hyprland dwindle, with live agent status pills in the top-right bar.*
+
+### Desktop Modules, Themes & Shaders
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="./assets/screenshots/03-cosmos-studio-robots-vinyl.png">
+        <img src="./assets/screenshots/03-cosmos-studio-robots-vinyl.png" alt="Cosmos Studio — Mecha-Chibi Robots & Vinyl Turntable" width="100%" />
+      </a>
+      <p align="center"><b>Cosmos Studio &amp; Vinyl Turntable</b><br /><sub>Procedural Mecha-Chibi robots for Claude, Codex, Hermes &amp; Antigravity + spinning MPRIS vinyl player</sub></p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="./assets/screenshots/04-starship-fastfetch-aurora.png">
+        <img src="./assets/screenshots/04-starship-fastfetch-aurora.png" alt="Starship Pastel-Powerline & Aurora Shader Player" width="100%" />
+      </a>
+      <p align="center"><b>Aurora Player &amp; Starship Prompt</b><br /><sub><code>Islands</code> capsules, 2-line Pastel-Powerline Starship prompt, and Aurora shader media mode</sub></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="./assets/screenshots/05-menu-center-palette.png">
+        <img src="./assets/screenshots/05-menu-center-palette.png" alt="Cosmos Menu — Floating Center Palette" width="100%" />
+      </a>
+      <p align="center"><b>Cosmos Menu — Center Floating Palette</b><br /><sub>Full-screen Gaussian blur with instant live switching across 5 positions (<code>Left · Right · Top · Bottom · Centre</code>)</sub></p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="./assets/screenshots/06-northstar-top-menu-wordmark.png">
+        <img src="./assets/screenshots/06-northstar-top-menu-wordmark.png" alt="Northstar Polar — Top Menu, Solid Glass Bar & Pixel Wordmark" width="100%" />
+      </a>
+      <p align="center"><b>Northstar Polar &amp; Top Slide Menu</b><br /><sub><code>Nord</code> palette, <code>Solid Glass</code> bar, centered desktop pins, and glacier pixel-art <code>OMARCHY</code> wordmark</sub></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="./assets/screenshots/07-appearances-settings-drawer.png">
+        <img src="./assets/screenshots/07-appearances-settings-drawer.png" alt="Appearances & Settings Drawer" width="100%" />
+      </a>
+      <p align="center"><b>Appearances &amp; Settings Drawer</b><br /><sub>6 curated visual profiles, 260+ Omarchy themes integration, custom snapshots, and live <code>Undo / Keep</code> preview bar</sub></p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="./assets/screenshots/08-optical-rain-lockscreen.png">
+        <img src="./assets/screenshots/08-optical-rain-lockscreen.png" alt="Optical GLSL Rain Lock Screen" width="100%" />
+      </a>
+      <p align="center"><b>Optical GLSL Rain Lock Screen</b><br /><sub>Real-time GPU droplet refraction (<code>Drizzle / Downpour / Clear</code>), pastel gradient clock, and live AI agent summary</sub></p>
+    </td>
+  </tr>
+</table>
 
 ---
 
 ## Features
 
-- **`cosmos.bar` & `cosmos.workspaces`** — Multi-mode frosted-glass top bar (**Bar**, **Islands**, **Solid**, **Transparent**) with adaptive contrast, dynamic workspace capsules with per-app glyphs, and a bottom dock for minimized windows.
-- **`cosmos.studio` & `cosmos.agent-pill`** — Live AI Agent Command Center side drawer and top-bar status pill. Monitors **Antigravity**, **Claude Desktop / Claude Code**, **ChatGPT Desktop**, **Codex**, and **Hermes Agent** (`~/.hermes/state.db`) locally via `cosmos-agent-watcher` with zero external network calls, rendering custom procedural **Mecha-Chibi robots** that react in real time (`working`, `waiting_input`, `idle`).
-- **`cosmos.vinyl-media`** — Spinning MPRIS vinyl disc pill in the top bar + integrated **Turntable** / **Aurora** media card inside Cosmos Studio, paired with a centered floating YouTube Music drawer.
-- **`cosmos.menu`** — 5-layout Omarchy Menu & Launcher replacement (**Left**, **Center**, **Top**, **Right**, **Full**) with instant live layout switching and system stats footer.
-- **`cosmos.lock`** — Custom GPU-accelerated optical rain refraction shader (`rain.frag.qsb` with **Off / Drizzle / Rain / Storm** modes) and theme-reactive gradient clock (`gradient_clock.frag.qsb`).
-- **`cosmos.background`** — Optional pixel-art `OMARCHY` gradient wordmark overlay (`logo_gradient.frag.qsb`, off by default, toggleable anytime) + `owe` one-shot Arrival video wallpaper support.
-- **`cosmos.settings`** — Right-side **Appearances & Settings** drawer with 6 curated theme presets, custom appearance snapshots, live **Undo / Keep** preview bar, and unified controls for bar, menu, rain, player, and wallpaper wordmark.
+- **`cosmos.bar` & `cosmos.workspaces`** — Multi-mode frosted-glass top bar (**Bar**, **Islands**, **Solid Glass**, **Transparent**) with adaptive contrast, dynamic workspace capsules with per-app glyphs, and window stash/restore controls.
+- **`cosmos.studio` & `cosmos.agent-pill`** — Live AI Agent Command Center side drawer, empty-desktop status pins, and top-bar status pill. Monitors **Antigravity**, **Claude Desktop / Claude Code**, **ChatGPT Desktop**, **Codex**, and **Hermes Agent** (`~/.hermes/state.db`) locally via `cosmos-agent-watcher` with zero external network calls, rendering custom procedural **Mecha-Chibi robots** that react in real time (`working`, `needs_you`, `finished`).
+- **`cosmos.vinyl-media`** — Spinning MPRIS vinyl disc pill in the top bar + integrated **Vinyl Turntable** / **Aurora** / **Minimal** media player inside Cosmos Studio, paired with a centered floating YouTube Music toggle.
+- **`cosmos.menu`** — 5-layout Omarchy Menu & Launcher replacement (**Left**, **Right**, **Top**, **Bottom**, **Centre**) with instant live layout switching and system telemetry footer.
+- **`cosmos.lock`** — Custom GPU-accelerated optical rain refraction shader (`rain.frag.qsb` with **Drizzle / Downpour / Clear** modes) and theme-reactive gradient clock (`gradient_clock.frag.qsb`).
+- **`cosmos.background`** — Optional pixel-art `OMARCHY` gradient wordmark overlay (`logo_gradient.frag.qsb`, toggleable anytime with multiple palette styles) + `owe` one-shot Arrival video wallpaper transitions.
+- **`cosmos.settings`** — Right-side **Appearances & Settings** drawer with 6 curated theme presets, custom appearance snapshots, live **Undo / Keep** preview bar, and unified **Customize** controls (`cosmos-ctl settings customize`) for bar, menu, pins, rain, arrival videos, and wallpaper wordmark.
 - **`config/starship-cosmos.toml`** *(optional)* — Two-line Pastel-Powerline Starship prompt with OS, path, Git branch/status, language runtimes, and command duration capsules.
 
 ---
@@ -57,16 +139,16 @@ Designed with single-modifier `SUPER` bindings (friendly for both native keyboar
 | Shortcut | Action |
 | :--- | :--- |
 | `SUPER + SPACE` | Open Cosmos Menu / App Launcher |
-| `SUPER + E` | Cycle Menu layout (`Left` → `Center` → `Top` → `Right` → `Full`) |
-| `SUPER + B` | Cycle Top Bar style (`Bar` → `Islands` → `Solid` → `Transparent`) |
+| `SUPER + E` | Cycle Menu layout (`Left` → `Right` → `Top` → `Bottom` → `Centre`) |
+| `SUPER + B` | Cycle Top Bar style (`Bar` → `Islands` → `Solid Glass` → `Transparent`) |
 | `SUPER + D` | Toggle **Cosmos Studio** side panel (AI Robots + Turntable) |
 | `SUPER + N` | Jump directly to the most urgent AI agent window |
 | `SUPER + Z` | Toggle **Appearances & Settings** drawer |
 | `SUPER + R` | Preview **Rain Lock Screen** (press `ESC` to close preview) |
 | `SUPER + .` | Toggle `OMARCHY` pixel-art wallpaper wordmark |
-| `SUPER + Y` | Toggle floating YouTube Music window |
-| `SUPER + S` | Show / restore desktop windows (`special:cosmos_desk`) |
-| `SUPER + H` / `SUPER + U` | Minimize active window to dock / restore last minimized window |
+| `SUPER + Y` | Toggle centered floating YouTube Music window |
+| `SUPER + S` | Show / restore desktop windows |
+| `SUPER + H` / `SUPER + U` | Stash active window / restore last stashed window |
 
 ---
 
@@ -74,6 +156,8 @@ Designed with single-modifier `SUPER` bindings (friendly for both native keyboar
 
 ```text
 omarchy-cosmos/
+├── assets/
+│   └── screenshots/           # 2560x1440 desktop & workflow screenshots
 ├── bin/
 │   ├── cosmos-ctl             # State, IPC, window & appearance controller CLI
 │   └── cosmos-agent-watcher   # Read-only local AI agent state daemon

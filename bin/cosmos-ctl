@@ -920,7 +920,7 @@ def cmd_arrival(args: list[str]) -> int:
 
 def cmd_settings(args: list[str]) -> int:
     action = args[0].strip().lower() if args else "toggle"
-    if action not in ("toggle", "open", "close"):
+    if action not in ("toggle", "open", "close", "customize"):
         action = "toggle"
     subprocess.run(["omarchy-shell", "cosmos.settings", action], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return 0

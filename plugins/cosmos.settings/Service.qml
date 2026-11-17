@@ -14,6 +14,8 @@ Item {
   readonly property string cosmosCtl: home + "/.local/bin/cosmos-ctl"
 
   property bool drawerOpen: false
+  property string requestedTab: "appearances"
+  property int tabReqSeq: 0
   property var cosmosConfig: ({
     barStyle: "frame",
     menuStyle: "left",
@@ -88,6 +90,15 @@ Item {
     }
 
     function open(): void {
+      root.requestedTab = "appearances"
+      root.tabReqSeq += 1
+      root.drawerOpen = true
+      root.reloadAll()
+    }
+
+    function customize(): void {
+      root.requestedTab = "customize"
+      root.tabReqSeq += 1
       root.drawerOpen = true
       root.reloadAll()
     }
@@ -130,6 +141,9 @@ Item {
         function onDrawerOpenChanged() {
           if (!root.drawerOpen) slideOutHold.restart()
           else drawerCard.forceActiveFocus()
+        }
+        function onTabReqSeqChanged() {
+          drawerCard.activeTab = root.requestedTab
         }
       }
 
