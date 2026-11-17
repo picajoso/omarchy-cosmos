@@ -11,11 +11,11 @@
 
 <br />
 
-<a href="./assets/screenshots/01-hero-hermes-browser-studio.png">
-  <img src="./assets/screenshots/01-hero-hermes-browser-studio.png" alt="Omarchy Cosmos — Hermes Agent, Browser, Islands Bar & Cosmos Studio" width="100%" />
+<a href="./assets/screenshots/08-optical-rain-lockscreen.png">
+  <img src="./assets/screenshots/08-optical-rain-lockscreen.png" alt="Omarchy Cosmos — Optical GLSL Rain Lock Screen" width="100%" />
 </a>
 
-*`Islands` frosted-glass bar · **Hermes Agent** + Chromium + **Cosmos Studio** (live Mecha-Chibi AI crew & spinning MPRIS vinyl turntable)*
+*Real-time GPU optical droplet refraction (`Drizzle / Downpour / Clear`) · pastel gradient clock · live AI agent activity summary*
 
 </div>
 
@@ -78,10 +78,10 @@ Every plugin, GLSL shader, procedural QML scene, and local watcher daemon is bui
       <p align="center"><b>Appearances &amp; Settings Drawer</b><br /><sub>6 curated visual profiles, 260+ Omarchy themes integration, custom snapshots, and live <code>Undo / Keep</code> preview bar</sub></p>
     </td>
     <td width="50%" valign="top">
-      <a href="./assets/screenshots/08-optical-rain-lockscreen.png">
-        <img src="./assets/screenshots/08-optical-rain-lockscreen.png" alt="Optical GLSL Rain Lock Screen" width="100%" />
+      <a href="./assets/screenshots/01-hero-hermes-browser-studio.png">
+        <img src="./assets/screenshots/01-hero-hermes-browser-studio.png" alt="Hermes Agent, Browser & Cosmos Studio" width="100%" />
       </a>
-      <p align="center"><b>Optical GLSL Rain Lock Screen</b><br /><sub>Real-time GPU droplet refraction (<code>Drizzle / Downpour / Clear</code>), pastel gradient clock, and live AI agent summary</sub></p>
+      <p align="center"><b>Hermes Agent, Browser &amp; Cosmos Studio</b><br /><sub><code>Islands</code> frosted-glass bar, <b>Hermes Agent</b> + Chromium side-by-side, and live AI crew + vinyl player</sub></p>
     </td>
   </tr>
 </table>
